@@ -17,38 +17,35 @@
                 <h1 class="text-xl font-bold text-emerald-400 flex items-center gap-2">
                     <i class="fa-solid fa-bolt"></i> Instant OTP Panel
                 </h1>
-                <p class="text-xs text-slate-400 mt-0.5">রেঞ্জ দিন, নম্বর নিন এবং যেকোনো OTP রিসিভ করুন</p>
+                <p class="text-xs text-slate-400 mt-0.5">সচল রেঞ্জ থেকে নম্বর নিন এবং লাইভ OTP রিসিভ করুন</p>
             </div>
             <span class="text-xs bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 px-3 py-1 rounded-full">
-                ● Live Server
+                ● Auto Live
             </span>
         </div>
 
-        <!-- Quick Range Finder (Optional Helper via liveaccess) -->
-        <div class="bg-slate-950/60 border border-slate-800 rounded-xl p-3 space-y-2">
+        <!-- Auto Updating Active Ranges -->
+        <div class="bg-slate-950/70 border border-slate-800 rounded-xl p-3.5 space-y-2.5">
             <div class="flex items-center justify-between">
-                <span class="text-xs text-slate-400 font-medium">
-                    <i class="fa-solid fa-fire text-amber-400 mr-1"></i> সার্ভিস অনুযায়ী অ্যাক্টিভ রেঞ্জ খুঁজুন:
+                <span class="text-xs font-semibold text-slate-300 flex items-center gap-1.5">
+                    <span class="w-2 h-2 bg-amber-400 rounded-full animate-pulse"></span>
+                    সার্ভারে চলমান রেঞ্জসমূহ (Auto Refresh)
                 </span>
-                <div class="flex gap-1.5">
-                    <input type="text" id="senderSearch" placeholder="যেমন: verify" value="verify" class="bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1 text-xs text-white w-28 focus:outline-none focus:border-emerald-500">
-                    <button onclick="fetchActiveRanges()" class="bg-slate-800 hover:bg-slate-700 text-xs px-2.5 py-1 rounded-lg text-emerald-400 transition cursor-pointer">
-                        খুঁজুন
-                    </button>
-                </div>
+                <span id="rangeSyncStatus" class="text-[11px] text-slate-500">আপডেট হচ্ছে...</span>
             </div>
-            <div id="activeRangesList" class="flex flex-wrap gap-1.5 pt-1"></div>
+            <div id="activeRangesList" class="flex flex-wrap gap-2 min-h-[32px] items-center">
+                <span class="text-xs text-slate-500">সক্রিয় রেঞ্জ লোড হচ্ছে...</span>
+            </div>
         </div>
 
         <!-- Step 1: Range Input -->
         <div class="space-y-2">
-            <label class="block text-sm font-medium text-slate-300">নম্বর রেঞ্জ লিখুন (Range)</label>
+            <label class="block text-sm font-medium text-slate-300">নম্বর রেঞ্জ (ক্লিক করে সিলেক্ট করুন বা লিখুন)</label>
             <div class="flex gap-2">
                 <input 
                     type="text" 
                     id="rangeInput" 
-                    placeholder="22501XXX" 
-                    value="22501XXX"
+                    placeholder="যেমন: 22501XXX" 
                     class="w-full bg-slate-950 border border-slate-700 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-emerald-500 font-mono text-base"
                 >
                 <button 
@@ -114,6 +111,7 @@
     <script>
         let currentNumber = "";
         let pollInterval = null;
+        let rangeInterval = null;
 
         function showToast(msg, isError = false) {
             const toast = document.getElementById("toastBox");
@@ -122,7 +120,7 @@
                 isError ? "bg-rose-950 border-rose-500 text-rose-200" : "bg-slate-800 border-emerald-500 text-emerald-300"
             }`;
             toast.classList.remove("hidden");
-            setTimeout(() => toast.classList.add("hidden"), 4000);
+            setTimeout(() => toast.classList.add("hidden"), 3500);
         }
 
         function copyText(text, successMsg) {
@@ -131,35 +129,73 @@
             showToast(successMsg);
         }
 
-        // ১. অ্যাক্টিভ রেঞ্জ খোঁজা (liveaccess)
+        // ১. সার্ভারের সব সচল রেঞ্জ অটোমেটিক লোড ও আপডেট করা (liveaccess)
         async function fetchActiveRanges() {
-            const sender = document.getElementById("senderSearch").value.trim();
             const container = document.getElementById("activeRangesList");
-            container.innerHTML = `<span class="text-xs text-slate-500">লোড হচ্ছে...</span>`;
+            const syncStatus = document.getElementById("rangeSyncStatus");
 
             try {
-                const res = await fetch(`/api/proxy?endpoint=liveaccess&sender=${encodeURIComponent(sender)}`);
+                // কোনো sender ফিল্টার ছাড়া কল করে সার্ভারের সব সচল রেঞ্জ আনা হচ্ছে
+                const res = await fetch(`/api/proxy?endpoint=liveaccess`);
                 const json = await res.json();
 
-                if (json.meta && json.meta.code === 0 && json.data.rows.length > 0) {
-                    container.innerHTML = "";
+                if (json.meta && json.meta.code === 0 && json.data && Array.isArray(json.data.rows) && json.data.rows.length > 0) {
+                    // ডুপ্লিকেট রেঞ্জ বাদ দিয়ে ইউনিক রেঞ্জগুলোর তালিকা তৈরি
+                    const rangeMap = new Map();
+
                     json.data.rows.forEach(row => {
-                        row.ranges.forEach(rng => {
-                            const btn = document.createElement("button");
-                            btn.className = "text-xs font-mono bg-slate-900 hover:bg-emerald-500/20 text-emerald-300 border border-slate-700 px-2.5 py-1 rounded-md transition cursor-pointer";
-                            btn.textContent = `${rng} (${row.sender})`;
-                            btn.onclick = () => {
-                                document.getElementById("rangeInput").value = rng;
-                                showToast(`রেঞ্জ সিলেক্ট হয়েছে: ${rng}`);
-                            };
-                            container.appendChild(btn);
-                        });
+                        if (Array.isArray(row.ranges)) {
+                            row.ranges.forEach(rng => {
+                                if (!rangeMap.has(rng)) {
+                                    rangeMap.set(rng, []);
+                                }
+                                if (row.sender && !rangeMap.get(rng).includes(row.sender)) {
+                                    rangeMap.get(rng).push(row.sender);
+                                }
+                            });
+                        }
                     });
+
+                    const rangeInput = document.getElementById("rangeInput");
+                    const currentSelectedRange = rangeInput.value.trim();
+
+                    container.innerHTML = "";
+                    rangeMap.forEach((senders, rng) => {
+                        const isSelected = currentSelectedRange === rng;
+                        const btn = document.createElement("button");
+                        btn.className = `text-xs font-mono px-3 py-1.5 rounded-lg border transition cursor-pointer ${
+                            isSelected
+                                ? "bg-emerald-500 text-slate-950 border-emerald-400 font-bold"
+                                : "bg-slate-900 hover:bg-emerald-500/20 text-emerald-300 border-slate-700"
+                        }`;
+                        const senderTag = senders.length > 0 ? ` • ${senders.slice(0, 2).join(", ")}` : "";
+                        btn.textContent = `${rng}${senderTag}`;
+                        btn.onclick = () => {
+                            rangeInput.value = rng;
+                            fetchActiveRanges(); // সিলেক্ট করা রেঞ্জ হাইলাইট করতে
+                            showToast(`রেঞ্জ সিলেক্ট হয়েছে: ${rng}`);
+                        };
+                        container.appendChild(btn);
+                    });
+
+                    // ইনপুট বক্স একদম খালি থাকলে প্রথম সচল রেঞ্জটি অটো বসিয়ে দেবে
+                    if (!currentSelectedRange && rangeMap.size > 0) {
+                        const firstRange = rangeMap.keys().next().value;
+                        rangeInput.value = firstRange;
+                        fetchActiveRanges();
+                    }
+
+                    const now = new Date();
+                    syncStatus.textContent = `আপডেট: ${now.toLocaleTimeString("bn-BD")}`;
                 } else {
-                    container.innerHTML = `<span class="text-xs text-slate-500">কোনো রেঞ্জ পাওয়া যায়নি</span>`;
+                    container.innerHTML = `<span class="text-xs text-slate-500">এই মুহূর্তে কোনো সচল রেঞ্জ নেই</span>`;
+                    syncStatus.textContent = "কোনো রেঞ্জ নেই";
                 }
             } catch (e) {
-                container.innerHTML = `<span class="text-xs text-rose-400">লোড ব্যর্থ হয়েছে</span>`;
+                syncStatus.textContent = "সিঙ্ক ব্যর্থ";
+                if (!container.children.length || container.textContent.includes("লোড হচ্ছে")) {
+                    container.innerHTML = `<span class="text-xs text-rose-400">সার্ভার থেকে রেঞ্জ আনা যাচ্ছে না</span>`;
+                }
             }
         }
 
@@ -167,7 +203,7 @@
         async function getNumber() {
             const range = document.getElementById("rangeInput").value.trim();
             if (!range) {
-                showToast("দয়া করে একটি সঠিক রেঞ্জ দিন!", true);
+                showToast("দয়া করে একটি রেঞ্জ সিলেক্ট করুন বা লিখুন!", true);
                 return;
             }
 
@@ -216,8 +252,6 @@
 
                 if (json.meta && json.meta.code === 0 && json.data && Array.isArray(json.data.rows)) {
                     const showAll = document.getElementById("showAllSms").checked;
-                    
-                    // '+' চিহ্ন বাদ দিয়ে নম্বর তুলনা করা যাতে মিস না হয়
                     const cleanTarget = currentNumber.replace(/\+/g, "").trim();
 
                     const filteredRows = json.data.rows.filter(row => {
@@ -234,7 +268,6 @@
                         otpList.innerHTML = "";
 
                         filteredRows.forEach(item => {
-                            // মেসেজ থেকে ৪-৮ ডিজিটের OTP কোড আলাদাভাবে বের করা
                             const codeMatch = item.message.match(/\b\d{4,8}\b/);
                             const otpCode = codeMatch ? codeMatch[0] : "";
 
@@ -273,8 +306,13 @@
             }
         }
 
-        // পেজ লোড হলে অটোমেটিক অ্যাক্টিভ রেঞ্জগুলো দেখাবে
-        window.onload = fetchActiveRanges;
+        // পেজ লোড হলে অটোমেটিক চলমান রেঞ্জ লোড হবে এবং প্রতি ১০ সেকেন্ডে আপডেট হবে
+        window.onload = () => {
+            fetchActiveRanges();
+            rangeInterval = setInterval(fetchActiveRanges, 10000);
+        };
     </script>
 </body>
 </html>
+
+   
